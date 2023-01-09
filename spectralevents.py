@@ -2,6 +2,7 @@
 
 # Authors: Tim Bardouille <tim.bardouille@dal.ca>
 #          Ryan Thorpe <ryvthorpe@gmail.com>
+# Method 3 added by Darcy Diesburg <darcy.diesburg@gmail.com>
 
 import numpy as np
 import scipy.signal as signal
@@ -109,7 +110,7 @@ def tfr_normalize(tfr):
 
 
 def find_events(tfr, times, freqs, event_band, thresholds=None,
-                threshold_FOM=6.):
+                threshold_FOM=6.,find_method=1):
     '''Locate spectral events in a time-frequency response.
 
     Parameters
@@ -180,9 +181,14 @@ def find_events(tfr, times, freqs, event_band, thresholds=None,
         raise ValueError('Mismatch in time dimensions!')
 
     # Find spectral events using appropriate method
-    #    Implementing find_method=1 for now
-    events = _find_localmax_method_1(tfr, freqs, times, event_band,
-                                     thresholds, med_powers, samp_freq)
+    if (find_method == 1):
+        events = _find_localmax_method_1(tfr, freqs, times, event_band,
+                                         thresholds, med_powers, samp_freq)
+    elif (find_method == 3):
+        events = _find_localmax_method_3(tfr, freqs, times, event_band,
+                                         med_powers, samp_freq, medianThresh=threshold_FOM)       
+    else:
+        raise ValueError('Invalid event find method!')    
 
     return events
 
@@ -336,6 +342,112 @@ def _find_localmax_method_1(tfr, freqs, times, event_band,
             event_freq = freqs[f_idx]
             if (event_freq >= event_band[0] and event_freq <= event_band[1] and
                thistfr[f_idx, t_idx] > eventThresholdByFrequency[f_idx]):
+                peakF.append(f_idx)
+                peakT.append(t_idx)
+                peakPower.append(thistfr[f_idx, t_idx])
+
+        numPeaks = len(peakF)
+
+        # Find local maxima lowerbound, upperbound, and full width at half max
+        #    for both frequency and time
+        for lmi in range(numPeaks):
+            thisPeakF = peakF[lmi]
+            thisPeakT = peakT[lmi]
+            thisPeakPower = peakPower[lmi]
+
+            # Indices of tfr frequencies < half max power at the time of a
+            # given local peak
+            tfrFrequencies = thistfr[:, thisPeakT]
+            lowerInd, upperInd, FWHM = _fwhm_lower_upper_bound1(tfrFrequencies,
+                                                                thisPeakF,
+                                                                thisPeakPower)
+            lowerEdgeFreq = freqs[lowerInd]
+            upperEdgeFreq = freqs[upperInd]
+            FWHMFreq = FWHM * (freqs[1] - freqs[0])
+
+            # Indices of tfr times < half max power at the frequency of a given
+            # local peak
+            tfrTimes = thistfr[thisPeakF, :]
+            lowerInd, upperInd, FWHM = _fwhm_lower_upper_bound1(tfrTimes,
+                                                                thisPeakT,
+                                                                thisPeakPower)
+            lowerEdgeTime = times[lowerInd]
+            upperEdgeTime = times[upperInd]
+            FWHMTime = FWHM / Fs
+
+            # Put peak characteristics to a dictionary
+            #        hit/miss,         maxima frequency,
+            #        lowerbound frequency,     upperbound frequency,
+            #        frequency span,         maxima timing,     event onset timing,
+            #        event offset timing,     event duration, maxima power,
+            #        maxima/median power
+            peakParameters = {
+                'Peak Frequency': freqs[thisPeakF],
+                'Lower Frequency Bound': lowerEdgeFreq,
+                'Upper Frequency Bound': upperEdgeFreq,
+                'Frequency Span': FWHMFreq,
+                'Peak Time': times[thisPeakT],
+                'Event Onset Time': lowerEdgeTime,
+                'Event Offset Time': upperEdgeTime,
+                'Event Duration': FWHMTime,
+                'Peak Power': thisPeakPower,
+                'Normalized Peak Power': thisPeakPower / medianPower[thisPeakF]
+            }
+
+            # Build a list of dictionaries
+            epoch_events.append(peakParameters)
+
+        all_epochs_events.append(epoch_events)
+
+    return all_epochs_events
+
+
+def _find_localmax_method_3(tfr, freqs, times, event_band, medianPower, Fs, medianThresh):
+    
+    '''
+    3rd event-finding method: Find spectral events by first thresholding 
+    normalized TFR in frequency band of interest, then finding local 
+    maxima. This method does not allow for overlapping events to occur in
+    a given suprathreshold region and ensures the presence of 
+    within-band, suprathreshold activity in any given trial will render 
+    an event.
+
+    spectralEvents: 12 column matrix for storing local max event metrics:
+            hit/miss,         maxima frequency,
+            lowerbound frequency,     upperbound frequency,
+            frequency span,         maxima timing,     event onset timing,
+            event offset timing,     event duration, maxima power,
+            maxima/median power
+    '''
+
+    n_epochs = tfr.shape[0]
+
+    all_epochs_events = list()
+
+    # Retrieve all local maxima in tfr using python equivalent of imregionalmax
+    for trial_idx in range(n_epochs):
+
+        epoch_events = list()
+
+        # Get tfr data for this trial [frequency x time]
+        thistfr = tfr[trial_idx, :, :]/medianPower[:,None]; # suprathreshold TFR: first isolate 2D TFR matrix and normalize
+        thistfr[thistfr<medianThresh] = 0
+        
+        # Get suprathreshold regions
+        data = thistfr
+        [reglabels,numlabels] = ndimage.label(thistfr) #label regions w/ndimage (note this produces 1 to n, not 0 to n labels)
+        # find coordinates for max within each label
+        yx = ndimage.maximum_position(thistfr,labels=reglabels,index=range(numlabels+1)[1:])
+
+        peakF = list()
+        peakT = list()
+        peakPower = list()
+        for f_idx, t_idx in yx:
+            f_idx = int(round(f_idx))
+            t_idx = int(round(t_idx))
+            event_freq = freqs[f_idx]
+            if (event_freq >= event_band[0] and event_freq <= event_band[1] and
+                thistfr[f_idx, t_idx] > medianThresh):
                 peakF.append(f_idx)
                 peakT.append(t_idx)
                 peakPower.append(thistfr[f_idx, t_idx])
