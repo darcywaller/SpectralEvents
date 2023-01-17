@@ -24,30 +24,30 @@ def test_event_comparison(method):
     to the Python event detection functions in the future. Python output is 
     tested against the output of MATLAB scripts from Shin et al., 2017. Detection
     of the same number of beta events within each trial is required, and tolerable
-    margins of deviation for the other parameters are as follows:
-    .........
+    margins of deviation for the other parameters.
     '''
     
     # Define tolerable deviance for spectral event characteristics
-    devMaxTime = 10 # +-10ms
+    devMaxTime = 5 # +-5ms
     devMaxFreq = 1 # +-1Hz
     devLowFreq = 1 # +-1Hz
     devHighFreq = 1 # +-1Hz
-    devOnset = 10 # +-10ms
-    devOffset = 10 # +-10ms
+    devOnset = 10 # +-5ms
+    devOffset = 10 # +-5ms
     devFOMPow = 0.5 # +-0.5 FOM
     
     # Load MATLAB data
     data_dir = os.getcwd()
     if method == 1:
-        matlabFile = loadmat(op.join(data_dir,'beta_events_shin_2017.mat'))
+        matlabFile = loadmat(op.join(data_dir,'tests','beta_events_shin_2017.mat'))
     elif method == 3:
-        matlabFile = loadmat(op.join(data_dir,'beta_events_shin_2017_method3.mat'))
+        matlabFile = loadmat(op.join(data_dir,'tests','beta_events_shin_2017_method3.mat'))
     else:
         raise ValueError('Unsupported method! Please use 1 or 3')
     matAllEvs = matlabFile['event_times'][0:200,0] # evs from 1st subject
     
     # Get python events by running find_events on demo data
+    # <----------SIMPLIFY BY GETTING PICKLE FILES FOR THIS INSTEAD----------->
     fname = op.join(data_dir,'data','prestim_humandetection_600hzMEG_subject1.mat')
     raw_data = loadmat(fname)
     data = raw_data['prestim_raw_yes_no']    
@@ -75,22 +75,77 @@ def test_event_comparison(method):
     assert np.array_equal(matEvs,pyEvs), "Should be same number of events across all trials"
     
     # Once assured same num of evs, extract event characteristics into np arrays
-    
-    
-    # Trial loop - checking first subject only for now
-    
-    # Check # evs per trial
-    #assert len(trialPyEvs)-len(trialMatEvs) == 0, "Should be same number of events within trials"
+    # matlab evs
+    matTimes = np.array([])
+    matMaxFreq = np.array([])
+    matLowFreq = np.array([])
+    matHighFreq = np.array([])
+    matOnsets = np.array([])
+    matOffsets = np.array([])
+    matPower = np.array([])
+    trialIndex = -1
+    for trial in matAllEvs:
+        trialIndex += 1
+        matTimes = [np.append(matTimes,ev) for ev in trial]
+        matMaxFreq = [np.append(matMaxFreq,ev) for ev in matlabFile['event_maxfreqs'][trialIndex]]
+        matLowFreq = [np.append(matLowFreq,ev) for ev in matlabFile['event_lowfreqs'][trialIndex]]
+        matHighFreq = [np.append(matHighFreq,ev) for ev in matlabFile['event_highfreqs'][trialIndex]]
+        matOnsets = [np.append(matOnsets,ev) for ev in matlabFile['event_onsets'][trialIndex]]
+        matOffsets = [np.append(matOffsets,ev) for ev in matlabFile['event_offsets'][trialIndex]]
+        matPower = [np.append(matPower,ev) for ev in matlabFile['event_powers'][trialIndex]]
+        
+    # python evs    
+    pyTimes = np.array([])
+    pyOnsets = np.array([])
+    pyOffsets = np.array([])
+    pyMaxFreq = np.array([])
+    pyLowFreq = np.array([])
+    pyHighFreq = np.array([])
+    pyPower = np.array([])
+    for trial in pyAllEvs:
+        if len(trial)>0:
+            trialTimes = np.array([])
+            trialOnsets = np.array([])
+            trialOffsets = np.array([])
+            trialMaxFreq = np.array([])
+            trialLowFreq = np.array([])
+            trialHighFreq = np.array([])
+            trialPower = np.array([])
+            for ev in trial:
+                trialTimes = np.append(trialTimes,ev['Peak Time'])
+                trialOnsets = np.append(trialOnsets,ev['Event Onset Time'])
+                trialOffsets = np.append(trialOffsets,ev['Event Offset Time'])
+                trialMaxFreq = np.append(trialMaxFreq,ev['Peak Frequency'])
+                trialLowFreq = np.append(trialLowFreq,ev['Lower Frequency Bound'])
+                trialHighFreq = np.append(trialHighFreq,ev['Upper Frequency Bound'])
+                trialPower = np.append(trialPower,ev['Normalized Peak Power'])
+                sorter = np.argsort(trialTimes)
+            pyTimes = np.append(pyTimes,trialTimes[sorter])
+            pyOnsets = np.append(pyOnsets,trialOnsets[sorter])
+            pyOffsets = np.append(pyOffsets,trialOffsets[sorter])
+            pyMaxFreq = np.append(pyMaxFreq,trialMaxFreq[sorter])
+            pyLowFreq = np.append(pyLowFreq,trialLowFreq[sorter])
+            pyHighFreq = np.append(pyHighFreq,trialHighFreq[sorter])
+            pyPower = np.append(pyPower,trialPower[sorter])
     
     # Timing - check max timing
-    #assert trialPyEvs[evIndex]-trialMatEvs[evIndex] <= devMaxTime, "Timing of events should be within tolerable limits of deviation"
+    assert ((matTimes - pyTimes)*1000 <= devMaxTime).all(), "Timing of events should be within tolerable limits of deviation"
     
     # Frequency - check max freq
+    assert ((matMaxFreq - pyMaxFreq) <= devMaxFreq).all(), "Peak frequency of events should be within tolerable limits of deviation"
+    
     # check lower freq bound
+    assert ((matLowFreq - pyLowFreq) <= devLowFreq).all(), "Lower frequency of events should be within tolerable limits of deviation"
+    
     # check higher freq bound
+    assert ((matHighFreq - pyHighFreq) <= devHighFreq).all(), "Higher frequency of events should be within tolerable limits of deviation"
     
     # Duration - check onset
-    # check offset
+    assert ((matOnsets - pyOnsets)*1000 <= devOnset).all(), "Onset of events should be within tolerable limits of deviation"
     
-    # Power - check maximum power, raw + FOM
+    # check offset
+    assert ((matOffsets - pyOffsets)*1000 <= devOffset).all(), "Offset of events should be within tolerable limits of deviation"
+    
+    # Power - check maximum power in FOM
+    assert ((matPower - pyPower) <= devFOMPow).all(), "Power of events should be within tolerable limits of deviation"
     
